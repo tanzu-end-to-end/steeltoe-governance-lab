@@ -1,0 +1,31 @@
+{
+  "name": "hystrix",
+  "description": "",
+  "creator": "admin",
+  "src_registry": {
+    "id": 4
+  },
+  "dest_registry": {
+    "id": 0
+  },
+  "dest_namespace": "steeltoe",
+  "filters": [
+      {
+          "type": "name",
+          "value": "steeltoeoss/hystrix-dashboard"
+      },
+      {
+          "type": "tag",
+          "value": "latest"
+      }
+  ],
+  "trigger": {
+    "type": "scheduled",
+    "trigger_settings": {
+      "cron": "0 20 10 */1,7,14,28 * *"
+    }
+  },
+  "deletion": false,
+  "override": true,
+  "enabled": true
+}

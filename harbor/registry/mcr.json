@@ -1,0 +1,17 @@
+{
+    "id": 6,
+    "name": "microsoft",
+    "description": "",
+    "type": "docker-registry",
+    "url": "https://mcr.microsoft.com",
+    "token_service_url": "",
+    "credential": {
+      "type": "",
+      "access_key": "",
+      "access_secret": ""
+    },
+    "insecure": false,
+    "status": "healthy",
+    "creation_time": "2020-08-14T17:21:11.034238Z",
+    "update_time": "2020-08-14T17:21:11.034241Z"
+  }
