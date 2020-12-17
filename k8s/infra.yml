@@ -54,6 +54,11 @@ spec:
         image: #@ "{}/steeltoe/eurekaserver".format(data.values.common.harborDomain)
         ports:
         - containerPort: 8761
+        env:
+        - name: JAVA_TOOL_OPTIONS
+          value: >-
+            -Deureka.instance.hostname=eurekaserver
+            -Deureka.client.serviceUrl.defaultZone=http://eurekaserver:8761/eureka
 ---
 apiVersion: v1
 kind: Service
@@ -64,7 +69,32 @@ spec:
   - port: 8761
   selector:
     app: eurekaserver
-  type: LoadBalancer
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: eureka
+  namespace: musicstore
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-contour-cluster-issuer
+    kubernetes.io/tls-acme: "true"
+    kubernetes.io/ingress.class: contour
+spec:
+  rules:
+  - host: eureka.serrano.tanzu.shortrib.io
+    http:
+      paths:
+      - backend:
+          service:
+            name: eurekaserver
+            port:
+              number: 8761
+        pathType: Prefix
+        path: /
+  tls:
+  - hosts:
+    - eureka.serrano.tanzu.shortrib.io
+    secretName: eureka.serrano.tanzu.shortrib.io-tls
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -85,7 +115,6 @@ spec:
           image: #@ "{}/steeltoe/hystrix-dashboard".format(data.values.common.harborDomain)
           ports:
             - containerPort: 7979
-
 ---
 apiVersion: v1
 kind: Service
@@ -96,5 +125,72 @@ spec:
     - port: 7979
   selector:
     app: hystrix-dashboard
-  type: LoadBalancer
-
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hystrix-dashboard
+  namespace: musicstore
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-contour-cluster-issuer
+    kubernetes.io/tls-acme: "true"
+    kubernetes.io/ingress.class: contour
+spec:
+  rules:
+  - host: hystrix.serrano.tanzu.shortrib.io
+    http:
+      paths:
+      - backend:
+          service:
+            name: hystrix-dashboard
+            port:
+              number: 7979
+        pathType: Prefix
+        path: /
+  tls:
+  - hosts:
+    - hystrix.serrano.tanzu.shortrib.io
+    secretName: hystrix.serrano.tanzu.shortrib.io-tls
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: configserver
+data:
+  spring_cloud_config_server_git_uri: https://github.com/crdant/steeltoe-musicstore-config
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: configserver
+spec:
+  selector:
+    matchLabels:
+      app: configserver
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: configserver
+    spec:
+      containers:
+      - name: configserver
+        image: #@ "{}/steeltoe/config-server".format(data.values.common.harborDomain)
+        ports:
+        - containerPort: 8888
+        envFrom:
+        - configMapRef:
+            name: configserver
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: configserver
+spec:
+  ports:
+  - port: 8888
+    name: configserver
+  - port: 8081
+    name: actuator
+  selector:
+    app: configserver
