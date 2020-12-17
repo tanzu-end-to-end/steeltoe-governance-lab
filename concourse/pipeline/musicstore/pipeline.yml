@@ -130,8 +130,7 @@ jobs:
       image_resource:
         type: docker-image
         source:
-          repository: mcr.microsoft.com/dotnet/sdk
-          tag: 3.1
+          repository: ((common.harborDomain))/tools/dotnet-sonarscanner
       inputs:
         - name: source-code
       run:
@@ -140,9 +139,9 @@ jobs:
         - '-c'
         - | 
           cd source-code 
-          # dotnet sconarscanner start -d:sonar.host.url=https://((sonarqube.host))
+          dotnet sonarscanner begin -k:musicstore -d:sonar.host.url=https://((sonarqube.host)) -d:sonar.login=((sonarqube.token)) 
           dotnet build MusicStore.sln
-          # dotnet sonarscanner end -d:sonar.login=((sonarqube.token))
+          dotnet sonarscanner end -d:sonar.login=((sonarqube.token))
 
 - name: policy-validation
   plan:
