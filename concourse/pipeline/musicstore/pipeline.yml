@@ -1,0 +1,655 @@
+resources:
+- name: source-code
+  type: git
+  source:
+    uri: ((musicstore.codeRepo))
+    paths:
+    - "src/**"
+- name: config-repo
+  type: git
+  source:
+    uri: ((musicstore.codeRepo))
+    paths:
+     - "k8s/**"
+- name: service-image
+  type: registry-image
+  source:
+    repository: ((musicstore.service-image))
+    tag: latest
+- name: ui-image
+  type: registry-image
+  source:
+    repository: ((musicstore.ui-image))
+    tag: latest
+- name: order-image
+  type: registry-image
+  source:
+    repository: ((musicstore.order-image))
+    tag: latest
+- name: cart-image
+  type: registry-image
+  source:
+    repository: ((musicstore.cart-image))
+    tag: latest
+- name: version
+  type: semver
+  source:
+    driver: git
+    uri: ((musicstore.codeRepo))
+    branch: version
+    file: version
+    username: ((common.githubUser))
+    password: ((common.githubToken))
+# - name: results
+#   type: s3
+#   source:
+#     bucket: ((sonarqube.resultsBucket))
+#     region_name: ((common.awsRegion))
+#     access_key_id: ((common.awsAccessKeyId))
+#     secret_access_key: ((common.awsSecretAccessKey))
+#     versioned_file: zap/musicstore.md
+
+jobs:
+- name: build
+  plan:
+  - get: source-code
+    trigger: true
+  - get: version
+    params:
+      pre: SNAPSHOT
+  - task: compile-and-test
+    output_mapping:
+      target: target
+    config:
+      platform: linux
+      image_resource:
+        type: docker-image
+        source:
+          repository: mcr.microsoft.com/dotnet/sdk
+          tag: 3.1
+      inputs:
+        - name: source-code
+      outputs:
+        - name: target
+      caches:
+        - path: source-code/maven
+      run:
+        path: /bin/bash
+        args:
+          - -c
+          - |
+            cd source-code
+            # Added -DskipTests and -Dcheckstyle.skip to speed up task for demo purpose
+            # They should not be included in a proper test pipeline
+            dotnet build MusicStore.sln 
+
+- name: test
+  plan:
+  - get: source-code
+    trigger: true
+    passed:
+    - build
+  - get: version
+    params:
+      pre: SNAPSHOT
+  - task: compile-and-test
+    output_mapping:
+      target: target
+    config:
+      platform: linux
+      image_resource:
+        type: docker-image
+        source:
+          repository: mcr.microsoft.com/dotnet/sdk
+          tag: 3.1
+      inputs:
+        - name: source-code
+      outputs:
+        - name: target
+      caches:
+        - path: source-code/maven
+      run:
+        path: /bin/bash
+        args:
+          - -c
+          - |
+            cd source-code
+            dotnet build MusicStore.sln
+
+- name: static-code-scan
+  plan:
+  - get: source-code
+    trigger: true
+    passed: 
+    - build
+  - task: sonarqube-scan
+    params:
+      # CA_CERT: ((ca_cert))
+    config:
+      platform: linux
+      image_resource:
+        type: docker-image
+        source:
+          repository: mcr.microsoft.com/dotnet/sdk
+          tag: 3.1
+      inputs:
+        - name: source-code
+      run:
+        path: bash
+        args:
+        - '-c'
+        - | 
+          cd source-code 
+          # dotnet sconarscanner start -d:sonar.host.url=https://((sonarqube.host))
+          dotnet build MusicStore.sln
+          # dotnet sonarscanner end -d:sonar.login=((sonarqube.token))
+
+- name: policy-validation
+  plan:
+  - get: source-code
+    trigger: true
+    passed: 
+    - static-code-scan
+    - test
+  - get: config-repo
+    trigger: true
+  - task: validate-k8s-objects
+    config:
+      platform: linux
+      image_resource:
+        type: registry-image
+        source:
+          repository: ((common.harborDomain))/tools/tanzu-application-toolkit
+      inputs:
+      - name: config-repo
+      run:
+        path: /bin/bash
+        args:
+        - -c
+        - |
+          conftest test --update oci://((common.harborDomain))/policy/workload-validation config-repo/k8s
+   
+- name: publish-store-image
+  plan: 
+    - get: source-code
+      passed: 
+      - static-code-scan
+      - test
+      trigger: true
+    - task: update-image
+      params:
+        KUBECONFIG_JSON: ((common.kubeconfigBuildServer))
+      input_mapping:
+        target: target
+      config:
+        platform: linux
+        image_resource:
+          type: docker-image
+          source:
+            repository: ((common.concourseHelperImage))
+        inputs:
+          - name: source-code
+        run:
+          path: /bin/bash
+          args:
+            - -c
+            - |
+              docker login ((common.harborDomain)) -u '((common.harborUser))' -p '((common.harborPassword))'
+              umask 077
+              echo $KUBECONFIG_JSON>kubeconfig.json
+              export KUBECONFIG=kubeconfig.json
+              set +e
+              kp image list -n ((musicstore.tbsNamespace)) | grep "steeltoe-musicstore-service" 
+              exists=$?
+              set -e
+              if [ $exists -eq 0 ]; then
+                kp image patch steeltoe-musicstore-service \
+                  --namespace ((musicstore.tbsNamespace)) \
+                  --wait \
+                  --local-path source-code/src/MusicStoreService
+              else
+                kp image create steeltoe-musicstore-service \
+                  --tag ((musicstore.service-image)) \
+                  --cluster-builder default \
+                  --namespace ((musicstore.tbsNamespace)) \
+                  --wait \
+                  --local-path source-code/src/MusicStoreService
+              fi
+    - get: service-image
+
+- name: publish-ui-image
+  plan: 
+    - get: source-code
+      passed: 
+      - static-code-scan
+      - test
+      trigger: true
+    - task: update-image
+      params:
+        KUBECONFIG_JSON: ((common.kubeconfigBuildServer))
+      input_mapping:
+        target: target
+      config:
+        platform: linux
+        image_resource:
+          type: docker-image
+          source:
+            repository: ((common.concourseHelperImage))
+        inputs:
+          - name: source-code
+        run:
+          path: /bin/bash
+          args:
+            - -c
+            - |
+              docker login ((common.harborDomain)) -u '((common.harborUser))' -p '((common.harborPassword))'
+              umask 077
+              echo $KUBECONFIG_JSON>kubeconfig.json
+              export KUBECONFIG=kubeconfig.json
+              set +e
+              kp image list -n ((musicstore.tbsNamespace)) | grep "steeltoe-musicstore-ui" 
+              exists=$?
+              set -e
+              if [ $exists -eq 0 ]; then
+                kp image patch steeltoe-musicstore-ui \
+                  --namespace ((musicstore.tbsNamespace)) \
+                  --wait \
+                  --local-path source-code/src/MusicStoreUI
+              else
+                kp image create steeltoe-musicstore-ui \
+                  --tag ((musicstore.ui-image)) \
+                  --cluster-builder default \
+                  --namespace ((musicstore.tbsNamespace)) \
+                  --wait \
+                  --local-path source-code/src/MusicStoreUI
+              fi
+    - get: ui-image
+
+- name: publish-order-image
+  plan: 
+    - get: source-code
+      passed: 
+      - static-code-scan
+      - test
+      trigger: true
+    - task: update-image
+      params:
+        KUBECONFIG_JSON: ((common.kubeconfigBuildServer))
+      input_mapping:
+        target: target
+      config:
+        platform: linux
+        image_resource:
+          type: docker-image
+          source:
+            repository: ((common.concourseHelperImage))
+        inputs:
+          - name: source-code
+        run:
+          path: /bin/bash
+          args:
+            - -c
+            - |
+              docker login ((common.harborDomain)) -u '((common.harborUser))' -p '((common.harborPassword))'
+              umask 077
+              echo $KUBECONFIG_JSON>kubeconfig.json
+              export KUBECONFIG=kubeconfig.json
+              set +e
+              kp image list -n ((musicstore.tbsNamespace)) | grep "steeltoe-musicstore-order-service" 
+              exists=$?
+              set -e
+              if [ $exists -eq 0 ]; then
+                kp image patch steeltoe-musicstore-order-service \
+                  --namespace ((musicstore.tbsNamespace)) \
+                  --wait \
+                  --local-path source-code/src/OrderService
+              else
+                kp image create steeltoe-musicstore-order-service \
+                  --tag ((musicstore.order-image)) \
+                  --cluster-builder default \
+                  --namespace ((musicstore.tbsNamespace)) \
+                  --wait \
+                  --local-path source-code/src/OrderService
+              fi
+    - get: order-image
+
+- name: publish-cart-image
+  plan: 
+    - get: source-code
+      passed: 
+      - static-code-scan
+      - test
+      trigger: true
+    - task: update-image
+      params:
+        KUBECONFIG_JSON: ((common.kubeconfigBuildServer))
+      input_mapping:
+        target: target
+      config:
+        platform: linux
+        image_resource:
+          type: docker-image
+          source:
+            repository: ((common.concourseHelperImage))
+        inputs:
+          - name: source-code
+        run:
+          path: /bin/bash
+          args:
+            - -c
+            - |
+              docker login ((common.harborDomain)) -u '((common.harborUser))' -p '((common.harborPassword))'
+              umask 077
+              echo $KUBECONFIG_JSON>kubeconfig.json
+              export KUBECONFIG=kubeconfig.json
+              set +e
+              kp image list -n ((musicstore.tbsNamespace)) | grep "steeltoe-musicstore-cart-service" 
+              exists=$?
+              set -e
+              if [ $exists -eq 0 ]; then
+                kp image patch steeltoe-musicstore-cart-service \
+                  --namespace ((musicstore.tbsNamespace)) \
+                  --wait \
+                  --local-path source-code/src/ShoppingCartService
+              else
+                kp image create steeltoe-musicstore-cart-service \
+                  --tag ((musicstore.cart-image)) \
+                  --cluster-builder default \
+                  --namespace ((musicstore.tbsNamespace)) \
+                  --wait \
+                  --local-path source-code/src/ShoppingCartService
+              fi
+    - get: cart-image
+
+# - name: application-scan
+#   public: true
+#   serial: true
+#   plan:
+#     - get: steeltoe-musicstore-image
+#       trigger: true
+#     - get: config-repo
+#       passed: 
+#       - policy-validation
+#       trigger: true
+#     - get: source-code
+#       passed: 
+#       - publish-store-image
+#       - publish-ui-image
+#       - publish-order-image
+#       - publish-cart-image
+#       trigger: true
+#     - task: deploy-db
+#       params:
+#         KUBECONFIG_JSON: ((common.kubeconfigAppServer))
+#       config:
+#         platform: linux
+#         image_resource:
+#           type: docker-image
+#           source:
+#             repository: ((common.concourseHelperImage))
+#             tag: latest
+#         inputs:
+#           - name: config-repo
+#           - name: steeltoe-musicstore-image
+#         run:
+#           path: /bin/bash
+#           args:
+#             - -c
+#             - |
+#               export DIGEST=$(cat steeltoe-musicstore-image/digest)
+
+#               # TODO Need to setup the kubeconfig
+#               umask 077
+#               echo $KUBECONFIG_JSON>kubeconfig.json
+#               export KUBECONFIG=kubeconfig.json
+
+#               cat > values.yaml <<VALUES
+#               auth:
+#                 rootPassword: musicstore
+#                 database: musicstore
+#                 username: musicstore
+#                 password: musicstore
+#               image:
+#                 registry: ((common.harborDomain))
+#                 repository: catalog/mysql
+#                 tag: latest
+#               secondary:
+#                 replicaCount: 0
+#               VALUES
+              
+#               helm repo add tac https://charts.trials.tac.bitnami.com/demo
+#               helm upgrade --install musicstore-db tac/mysql -n musicstore-staging -f values.yaml --wait
+
+#     - task: deploy-app
+#       params:
+#         KUBECONFIG_JSON: ((common.kubeconfigAppServer))
+#       config:
+#         platform: linux
+#         image_resource: 
+#           type: docker-image
+#           source :
+#             repository: ((common.concourseHelperImage))
+#             tag: latest
+#         inputs:
+#           - name: config-repo
+#           - name: steeltoe-musicstore-image
+#         run:
+#           path: /bin/bash
+#           args:
+#             - -c
+#             - |
+#               export DIGEST=$(cat steeltoe-musicstore-image/digest)
+
+#               # TODO Need to setup the kubeconfig
+#               umask 077
+#               echo $KUBECONFIG_JSON>kubeconfig.json
+#               export KUBECONFIG=kubeconfig.json
+
+#               cat > config-repo/k8s/values.yml <<VALUES
+#               #@data/values
+#               ---
+#               musicstore:
+#                 host: ((musicstore.stagingPrefix))-${DIGEST:7:17}.((musicstore.stagingDomain))
+#                 image: ((musicstore.image))@$DIGEST
+#                 wavefront:
+#                   applicationName: ((musicstore.wavefrontApplicationName))-staging
+#                   uri: ((musicstore.wavefrontUri))
+#                   apiToken: ((musicstore.wavefrontApiToken))
+#               VALUES
+              
+#               cat > config-repo/k8s/issuer.yaml <<OVERLAY
+#               #@ load("@ytt:overlay", "overlay")
+#               #@overlay/match by=overlay.subset({"kind":"Ingress"}),expects="1+"
+#               ---
+#               metadata:
+#                 annotations: 
+#                   cert-manager.io/cluster-issuer: letsencrypt-staging-contour-cluster-issuer
+#               OVERLAY
+#               ytt -f config-repo/k8s --ignore-unknown-comments | kapp deploy -n musicstore-staging --into-ns musicstore-staging -a musicstore -y -f -
+
+#     - task: prepare-results-path
+#       config:
+#         platform: linux
+#         image_resource: 
+#           type: docker-image
+#           source :
+#             repository: ((common.concourseHelperImage))
+#             tag: latest
+#         outputs:
+#           - name: results
+#         run:
+#           path: /bin/bash
+#           args:
+#             - '-c' 
+#             - |
+#               output_dir=$(pwd)/results/zap
+#               mkdir ${output_dir} && chgrp 1000 ${output_dir} && chmod g+w ${output_dir}
+
+#     - task: quick-scan
+#       params:
+#         # CA_CERT: ((ca_cert))
+#       config:
+#         platform: linux
+#         image_resource:
+#           type: registry-image
+#           source:
+#             repository: ((common.harborDomain))/tools/zap2docker-weekly
+#             tag: latest
+#         inputs:
+#         - name: steeltoe-musicstore-image
+#         - name: results
+#         outputs:
+#         - name: results
+#         run:
+#           path: bash
+#           args:
+#           - '-c'
+#           - | 
+#             export DIGEST=$(cat steeltoe-musicstore-image/digest)
+#             export TARGET=https://((musicstore.stagingPrefix))-${DIGEST:7:17}.((musicstore.stagingDomain))
+
+#             zap-cli start --start-options '-config api.disablekey=true' 
+#             zap-cli -v quick-scan --spider --ajax-spider --scanners all "${TARGET}" 
+#             zap-cli report -f md -o results/zap/musicstore.md
+#             zap-cli shutdown
+
+#     - put: results      
+#       params:
+#         file: results/zap/musicstore.md
+
+
+#     - task: cleanup
+#       params:
+#         KUBECONFIG_JSON: ((common.kubeconfigAppServer))
+#       config:
+#         platform: linux
+#         image_resource:
+#           type: docker-image
+#           source:
+#             repository: ((common.concourseHelperImage))
+#             tag: latest
+#         inputs:
+#           - name: config-repo
+#           - name: steeltoe-musicstore-image
+#         run:
+#           path: /bin/bash
+#           args:
+#             - -c
+#             - |
+#               export DIGEST=$(cat steeltoe-musicstore-image/digest)
+
+#               # TODO Need to setup the kubeconfig
+#               umask 077
+#               echo $KUBECONFIG_JSON>kubeconfig.json
+#               export KUBECONFIG=kubeconfig.json
+              
+#               kapp delete -n musicstore-staging -a musicstore --filter '{ "not": { "resource" : { "kinds": [ "AntreaControllerInfo" ] } } }' -y
+#               helm delete -n musicstore-staging musicstore-db 
+
+ 
+- name: production-deployment
+  public: true
+  serial: true
+  plan:
+    - get: service-image
+      trigger: true
+      passed:
+      - publish-store-image
+    - get: ui-image
+      trigger: true
+      passed:
+      - publish-ui-image
+    - get: order-image
+      trigger: true
+      passed:
+      - publish-order-image
+    - get: cart-image
+      trigger: true
+      passed:
+      - publish-cart-image
+    - get: config-repo
+      passed: 
+      - policy-validation
+      trigger: true
+    - task: create-wavefront-event
+      params:
+        WAVEFRONT_API_TOKEN: ((musicstore.wavefrontApiToken))
+        WAVEFRONT_URL: ((musicstore.wavefrontUri))
+        WAVEFRONT_DEPLOY_EVENT_NAME: ((musicstore.wavefrontDeployEventName))
+      config:
+        platform: linux
+        image_resource:
+          type: docker-image
+          source:
+            repository: ((common.concourseHelperImage))
+            tag: latest
+        run:
+          path: /bin/bash
+          args:
+            - -c
+            - |
+              set -euo pipefail
+
+              START_TIME=$(date +%s000)
+              sleep 1
+              END_TIME=$(date +%s000)
+
+              curl \
+                -X POST \
+                --header "Content-Type: application/json" \
+                --header "Accept: application/json" \
+                --header "Authorization: Bearer ${WAVEFRONT_API_TOKEN}" \
+                -d "{
+                  \"name\": \"${WAVEFRONT_DEPLOY_EVENT_NAME}\",
+                  \"annotations\": {
+                    \"severity\": \"info\",
+                    \"type\": \"image deploy\",
+                    \"details\": \"new steeltoe-musicstore image deployed\"
+                  },
+                  \"startTime\": "${START_TIME}",
+                  \"endTime\": "${END_TIME}"
+                }" "${WAVEFRONT_URL}/api/v2/event"
+
+    - task: deploy-app
+      params:
+        KUBECONFIG_JSON: ((common.kubeconfigAppServer))
+      config:
+        platform: linux
+        image_resource:
+          type: docker-image
+          source:
+            repository: ((common.concourseHelperImage))
+            tag: latest
+        inputs:
+          - name: config-repo
+        run:
+          path: /bin/bash
+          args:
+            - -c
+            - |
+
+              # TODO Need to setup the kubeconfig
+              umask 077
+              echo $KUBECONFIG_JSON>kubeconfig.json
+              export KUBECONFIG=kubeconfig.json
+
+              cat > config-repo/k8s/values.yml <<VALUES
+              #@data/values
+              ---
+              musicstore:
+                host: ((musicstore.host))
+                wavefront:
+                  applicationName: ((musicstore.wavefrontApplicationName))
+                  uri: ((musicstore.wavefrontUri))
+                  apiToken: ((musicstore.wavefrontApiToken))
+              registry:
+                host: ((common.harborDomain))
+                project: ((musicstore.project))
+              VALUES
+              cat config-repo/k8s/values.yml
+              
+              ytt -f config-repo/k8s --ignore-unknown-comments | kapp deploy -n musicstore -a musicstore -y -f -
+
+    - put: version
+      params:
+        pre: SNAPSHOT
