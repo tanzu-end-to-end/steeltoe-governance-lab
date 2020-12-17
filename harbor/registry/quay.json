@@ -1,0 +1,17 @@
+{
+    "id": 7,
+    "name": "quay-no-auth",
+    "description": "",
+    "type": "quay-io",
+    "url": "https://quay.io",
+    "token_service_url": "",
+    "credential": {
+      "type": "",
+      "access_key": "",
+      "access_secret": ""
+    },
+    "insecure": false,
+    "status": "healthy",
+    "creation_time": "2020-08-14T17:21:11.034238Z",
+    "update_time": "2020-08-14T17:21:11.034241Z"
+  }

@@ -1,0 +1,31 @@
+{
+  "name": "cert-manager-acmesolver",
+  "description": "",
+  "creator": "admin",
+  "src_registry": {
+    "id": 7
+  },
+  "dest_registry": {
+    "id": 0
+  },
+  "dest_namespace": "cert-manager",
+  "filters": [
+      {
+          "type": "name",
+          "value": "jetstack/cert-manager-acmesolver"
+      },
+      {
+          "type": "tag",
+          "value": "canary"
+      }
+  ],
+  "trigger": {
+    "type": "scheduled",
+    "trigger_settings": {
+      "cron": "0 20 10 */1,7,14,28 * *"
+    }
+  },
+  "deletion": false,
+  "override": true,
+  "enabled": true
+}
