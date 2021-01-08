@@ -23,9 +23,18 @@ further into that Lab rather than into the next step for this one.
    since this parameter file is adapted from his.
 2. [Configure Governance Lab Components](02-configure-governance-lab.md) to prepare several
    of the trust and control points that are also used in this lab.
-3. [Setup the environment for the Steeltoe development team](03-setup-team.md). 
+3. [Further configure Harbor](03-additional-harbor-config.md) with projects, registries,
+   and replications required for this lab.
+4. [Patch cert-manager](04-patch-cert-manager.md) so that it uses a solver pulled 
+   from the private registry and avoids policy violations.
+5. [Setup the environment for the Steeltoe development team](05-setup-team.md). 
    Creates dependencies for the development team in Okta, Concourse, TMC, and both 
    the workload and shared services clusters.
-4. [Setup Concourse secrets and pipeline](04-set-pipeline.md). The script 
+6. [Prepare Spring Cloud infrastructure](06-prepare-spring-cloud-infra.md) to add
+   Spring Cloud server components that the Steeltoe Music Store depends on.
+7. [Setup Concourse secrets](07-set-pipeline-secrets.md). The script 
+   both sets the secrets in Kubernetes and set the pipeline in Concourse so they'll
+   each be up-to-date and in sync.
+8. [Setup Concourse pipeline](08-set-pipeline.md). The script 
    both sets the secrets in Kubernetes and set the pipeline in Concourse so they'll
    each be up-to-date and in sync.

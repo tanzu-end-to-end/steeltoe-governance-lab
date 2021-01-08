@@ -13,4 +13,4 @@ setup-harbor.sh
 
 ## Next Step
 
-[Setup Music Store team](04-setup-team.md)
+[Patch cert-manager](04-patch-cert-manager.md)

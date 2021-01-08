@@ -12,4 +12,4 @@ configure-secrets.sh
 
 ## Next Steps
 
-[Set the Concourse pipeline](07-set-pipeline.md)
+[Set the Concourse pipeline](08-set-pipeline.md)
